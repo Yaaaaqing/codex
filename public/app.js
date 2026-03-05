@@ -26,12 +26,15 @@ function formatTs(ts) {
 
 function StatusTag({ status }) {
   const map = {
-    '未上传': { color: 'default' },
-    '待设基线': { color: 'orange' },
-    '已设基线': { color: 'green' }
+    'PENDING_APPROVAL': { color: 'orange', text: '待审批' },
+    'DEBUGGING': { color: 'blue', text: '调试中' },
+    'PENDING_INSPECTION': { color: 'gold', text: '待检验' },
+    'INSPECTED': { color: 'green', text: '已检验(可交付)' },
+    'DELIVERED': { color: 'cyan', text: '已交付' },
+    'FROZEN': { color: 'purple', text: '已冻结' }
   };
-  const m = map[status] || { color: 'blue' };
-  return React.createElement(Tag, { color: m.color }, status || '-');
+  const m = map[status] || { color: 'blue', text: status || '-' };
+  return React.createElement(Tag, { color: m.color }, m.text);
 }
 
 function App() {
@@ -43,7 +46,7 @@ function App() {
     if (!res.ok) return null;
     const u = await res.json();
     setMe(u);
-    setRoute(u.role === 'admin' ? 'admin' : (u.role === 'dept_lead' ? 'lead' : 'employee'));
+    setRoute(['admin','process_admin'].includes(u.role) ? 'admin' : (['dept_lead','supervisor','qa'].includes(u.role) ? 'lead' : 'employee'));
     return u;
   }
 
@@ -156,7 +159,7 @@ function EmployeeDashboard({ me }) {
     const data = await res.json();
     if (!res.ok) return message.error(data.message || '创建失败');
 
-    message.success('创建成功：已提交 Baseline 待审批');
+    message.success('创建设备成功：已建档，需主管审批通过后才可继续调试');
     setCreateModal(false);
     createForm.resetFields();
     await refresh();
@@ -166,6 +169,7 @@ function EmployeeDashboard({ me }) {
     { title: '设备名称', dataIndex: 'name', key: 'name', render: (t) => React.createElement(Text, { strong: true }, t) },
     { title: '设备SN', dataIndex: 'device_sn', key: 'device_sn', width: 160, render: (t) => React.createElement(Text, { className: 'mono' }, t) },
     { title: '部门', dataIndex: 'dept', key: 'dept', width: 90, render: (t) => React.createElement(Tag, null, t) },
+    { title: '设备状态', dataIndex: 'status', key: 'status', width: 130, render: (t) => React.createElement(StatusTag, { status: t }) },
     { title: '创建人', dataIndex: 'created_by', key: 'created_by', width: 100 },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 170, render: (t) => formatTs(t) },
     {
@@ -278,9 +282,10 @@ function DeptLeadDashboard({ me }) {
 
   const columns = [
     { title: '设备名称', dataIndex: 'name', key: 'name', render: (t) => React.createElement(Text, { strong: true }, t) },
+    { title: '设备状态', dataIndex: 'status', key: 'status', width: 130, render: (t) => React.createElement(StatusTag, { status: t }) },
     { title: '创建人', dataIndex: 'created_by', key: 'created_by', width: 120 },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 170, render: (t) => formatTs(t) },
-    { title: '操作', key: 'op', width: 120, render: (_, r) => React.createElement(Button, { type: 'link', onClick: () => setDetailId(r.id) }, '查看详情') }
+    { title: '操作', key: 'op', width: 120, render: (_, r) => React.createElement(Button, { type: 'link', onClick: () => setDetailId(r.device_sn) }, '查看详情') }
   ];
 
   const auditColumns = [
@@ -448,9 +453,13 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
   const [detail, setDetail] = useState(null);
   const [versions, setVersions] = useState([]);
   const [timeline, setTimeline] = useState([]);
+  const [archive, setArchive] = useState(null);
+  const [gate, setGate] = useState(null);
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [recordModal, setRecordModal] = useState(false);
   const [recordForm] = Form.useForm();
+  const [frozenVersionId, setFrozenVersionId] = useState('');
 
   async function refresh() {
     setLoading(true);
@@ -461,6 +470,13 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
       setVersions(v);
       const t = await (await apiFetch(`/api/devices/${deviceId}/timeline`)).json();
       setTimeline(t);
+
+      const aRes = await apiFetch(`/api/machines/${deviceId}/debugArchive`);
+      if (aRes.ok) setArchive(await aRes.json());
+      const gRes = await apiFetch(`/api/machines/${deviceId}/delivery-gate`);
+      if (gRes.ok) setGate(await gRes.json());
+      const taskRes = await apiFetch(`/api/machines/${deviceId}/inspection-tasks`);
+      if (taskRes.ok) setTasks(await taskRes.json());
     } finally { setLoading(false); }
   }
 
@@ -472,8 +488,8 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
       : `/api/devices/${deviceId}/versions/${vid}/set-baseline`;
     const res = await apiFetch(url, { method: 'POST' });
     const data = await res.json();
-    if (!res.ok) { message.error(data.message || '操作失败'); return; }
-    message.success(kind === 'current' ? '已设为当前版本' : '已设为基线版本');
+    if (!res.ok) return message.error(data.message || '操作失败');
+    message.success('已设为当前版本');
     refresh();
   }
 
@@ -483,10 +499,55 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
       body: { description: values.description, recordType: values.recordType }
     });
     const data = await res.json();
-    if (!res.ok) { message.error(data.message || '保存失败'); return; }
+    if (!res.ok) return message.error(data.message || '保存失败');
     message.success('记录已保存');
     setRecordModal(false);
     recordForm.resetFields();
+    refresh();
+  }
+
+
+  async function submitArchive() {
+    if (!archive?.archive_id) return;
+    const res = await apiFetch(`/api/debug-archives/${archive.archive_id}/submit`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) return message.error(data.message || '提交失败');
+    message.success('已提交审批');
+    refresh();
+  }
+
+  async function approveArchive(ok) {
+    if (!archive?.archive_id) return;
+    const url = `/api/debug-archives/${archive.archive_id}/${ok ? 'approve' : 'reject'}`;
+    const res = await apiFetch(url, { method: 'POST', body: { comment: ok ? '通过' : '驳回' } });
+    const data = await res.json();
+    if (!res.ok) return message.error(data.message || '操作失败');
+    message.success(ok ? '已审批通过' : '已驳回');
+    refresh();
+  }
+
+  async function generateTasks() {
+    if (!frozenVersionId.trim()) return message.error('请输入冻结版本ID');
+    const res = await apiFetch(`/api/machines/${deviceId}/inspection-tasks/generate`, { method: 'POST', body: { frozenVersionId } });
+    const data = await res.json();
+    if (!res.ok) return message.error(data.message || '生成失败');
+    message.success(`已生成 ${data.generated || 0} 项任务`);
+    refresh();
+  }
+
+  async function signTask(taskId, result) {
+    const res = await apiFetch(`/api/inspection-tasks/${taskId}/result`, { method: 'POST', body: { result, remark: 'UI签署' } });
+    const data = await res.json();
+    if (!res.ok) return message.error(data.message || '签署失败');
+    message.success('签署完成');
+    refresh();
+  }
+
+  async function finalize(vid) {
+    const res = await apiFetch(`/api/machines/${deviceId}/finalize-delivery`, { method: 'POST', body: { plcVersionId: vid } });
+    const data = await res.json();
+    if (!res.ok) return message.error(data.message || '封存失败');
+    message.success('已封存最终版本并归档报告');
     refresh();
   }
 
@@ -495,11 +556,26 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
     { title: '文件', dataIndex: 'filename', key: 'filename' },
     { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 170, render: (t) => formatTs(t) },
     {
-      title: '操作', key: 'op', width: 260,
+      title: '操作', key: 'op', width: 360,
       render: (_, r) => React.createElement(Space, null,
         React.createElement(Button, { size: 'small', onClick: () => setPointer(r.id, 'current') }, '设为当前'),
-        React.createElement(Button, { size: 'small', onClick: () => setPointer(r.id, 'baseline') }, '设为基线'),
-        React.createElement(Button, { size: 'small', onClick: () => window.open(`/api/versions/${r.id}/download`, '_blank') }, '下载')
+        React.createElement(Button, { size: 'small', onClick: () => window.open(`/api/versions/${r.id}/download`, '_blank') }, '下载'),
+        React.createElement(Button, { size: 'small', type: 'primary', onClick: () => finalize(r.id) }, '封存Final')
+      )
+    }
+  ];
+
+  const taskColumns = [
+    { title: '项编码', dataIndex: 'item_code', key: 'item_code', width: 120 },
+    { title: '项名称', dataIndex: 'item_name', key: 'item_name' },
+    { title: '必选', dataIndex: 'is_required', key: 'is_required', width: 80, render: (v) => v ? React.createElement(Tag, { color: 'red' }, '必选') : React.createElement(Tag, null, '可选') },
+    { title: '结果', dataIndex: 'result', key: 'result', width: 90 },
+    { title: '签署人', dataIndex: 'qa_user_id', key: 'qa_user_id', width: 100 },
+    {
+      title: '签署', key: 'sign', width: 150,
+      render: (_, r) => React.createElement(Space, null,
+        React.createElement(Button, { size: 'small', onClick: () => signTask(r.task_id, 'PASS') }, '通过'),
+        React.createElement(Button, { size: 'small', danger: true, onClick: () => signTask(r.task_id, 'FAIL') }, '不通过')
       )
     }
   ];
@@ -509,7 +585,7 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
     multiple: false,
     action: `/api/devices/${deviceId}/versions`,
     headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-    data: (file) => ({ versionLabel: 'V1.0' }),
+    data: () => ({ versionLabel: 'P-调试版' }),
     onChange(info) {
       if (info.file.status === 'done') { message.success('上传成功'); refresh(); }
       else if (info.file.status === 'error') { message.error('上传失败'); }
@@ -523,71 +599,42 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
     )
   }));
 
-  const current = detail && detail.current ? detail.current : null;
-  const baseline = detail && detail.baseline ? detail.baseline : null;
-
-  return React.createElement(Drawer, {
-    title: '设备详情',
-    open: true,
-    width: 980,
-    onClose
-  },
+  return React.createElement(Drawer, { title: '设备详情（工程履历）', open: true, width: 1100, onClose },
     detail ? React.createElement(Space, { direction: 'vertical', size: 12, style: { width: '100%' } },
-      React.createElement(Row, { gutter: 12 },
-        React.createElement(Col, { span: 12 },
-          React.createElement(Card, { title: '设备信息', size: 'small' },
-            React.createElement(Space, { direction: 'vertical' },
-              React.createElement(Text, { strong: true }, detail.device.name),
-              React.createElement(Space, null,
-                React.createElement(Tag, null, `dept ${detail.device.dept}`),
-                React.createElement(Tag, null, `created_by ${detail.device.created_by}`),
-                React.createElement(StatusTag, { status: detail.status })
-              ),
-              React.createElement(Text, { type: 'secondary' }, `创建时间：${formatTs(detail.device.created_at)}`)
-            )
-          )
-        ),
-        React.createElement(Col, { span: 12 },
-          React.createElement(Card, { title: '当前/基线指针', size: 'small' },
-            React.createElement(Row, { gutter: 12 },
-              React.createElement(Col, { span: 12 },
-                React.createElement(Card, { size: 'small', type: 'inner', title: '当前版本', extra: current ? React.createElement(Tag, { color: 'blue' }, 'CURRENT') : React.createElement(Tag, null, '未设置') },
-                  current
-                    ? React.createElement(Space, { direction: 'vertical', size: 0 },
-                        React.createElement(Text, { className: 'mono' }, current.display_no),
-                        React.createElement(Text, { type: 'secondary' }, current.filename),
-                        React.createElement(Text, { type: 'secondary' }, formatTs(current.created_at))
-                      )
-                    : React.createElement(Text, { type: 'secondary' }, '请选择一个版本设为当前')
-                )
-              ),
-              React.createElement(Col, { span: 12 },
-                React.createElement(Card, { size: 'small', type: 'inner', title: '基线版本', extra: baseline ? React.createElement(Tag, { color: 'green' }, 'BASELINE') : React.createElement(Tag, color=null, children='未设置') },
-                  baseline
-                    ? React.createElement(Space, { direction: 'vertical', size: 0 },
-                        React.createElement(Text, { className: 'mono' }, baseline.display_no),
-                        React.createElement(Text, { type: 'secondary' }, baseline.filename),
-                        React.createElement(Text, { type: 'secondary' }, formatTs(baseline.created_at))
-                      )
-                    : React.createElement(Text, { type: 'secondary' }, '请选择一个版本设为基线')
-                )
-              )
-            )
+      React.createElement(Card, { size: 'small', title: '调试档案审批门禁' },
+        React.createElement(Space, { direction: 'vertical', style: { width: '100%' } },
+          React.createElement(Text, null, `档案状态：${archive?.approval_status || '未建档'}`),
+          React.createElement(Space, null,
+            React.createElement(Button, { onClick: submitArchive, disabled: !archive || archive.approval_status !== 'DRAFT' || !['user','debugger'].includes(role) }, '提交审批'),
+            (['dept_lead','supervisor','admin'].includes(role) ? React.createElement(Button, { type: 'primary', onClick: () => approveArchive(true), disabled: !archive || archive.approval_status !== 'SUBMITTED' }, '审批通过') : null),
+            (['dept_lead','supervisor','admin'].includes(role) ? React.createElement(Button, { danger: true, onClick: () => approveArchive(false), disabled: !archive || archive.approval_status !== 'SUBMITTED' }, '审批驳回') : null)
           )
         )
       ),
-      React.createElement(Card, { title: '上传新版本（本地模拟对象存储）', size: 'small' },
-        React.createElement(Space, null,
-          React.createElement(Upload, uploadProps, React.createElement(Button, { type: 'primary' }, '选择文件并上传')),
-          React.createElement(Text, { type: 'secondary' }, '上传后自动生成 display_no（带时间戳）')
-        )
+      React.createElement(Card, { size: 'small', title: '交付门禁检查' },
+        gate ? React.createElement(Space, null,
+          React.createElement(Tag, { color: gate.approvedArchive ? 'green' : 'orange' }, `建档审批:${gate.approvedArchive ? '通过' : '未通过'}`),
+          React.createElement(Tag, { color: gate.requiredAllPassed ? 'green' : 'orange' }, `必选通过:${gate.requiredPassed}/${gate.requiredTotal}`),
+          React.createElement(Tag, { color: gate.finalSealed ? 'green' : 'orange' }, `Final封存:${gate.finalSealed ? '是' : '否'}`),
+          React.createElement(Tag, { color: gate.canDeliver ? 'green' : 'red' }, `可交付:${gate.canDeliver ? '是' : '否'}`)
+        ) : React.createElement(Text, { type: 'secondary' }, '暂无数据')
+      ),
+      React.createElement(Card, { title: '上传过程版本', size: 'small' },
+        React.createElement(Upload, uploadProps, React.createElement(Button, { type: 'primary' }, '选择文件并上传'))
       ),
       React.createElement(Card, { title: '版本列表', size: 'small' },
         React.createElement(Table, { rowKey: 'id', columns: versionColumns, dataSource: versions, loading, pagination: { pageSize: 5 } }),
         React.createElement(Divider, null),
-        React.createElement(Button, { onClick: () => setRecordModal(true) }, '新增变更/检验记录（写入时间线）')
+        React.createElement(Button, { onClick: () => setRecordModal(true) }, '新增记录')
       ),
-      React.createElement(Card, { title: '时间线（上传/切换/记录等事件）', size: 'small' },
+      React.createElement(Card, { title: '检验任务（冻结清单生成）', size: 'small' },
+        React.createElement(Space, { style: { marginBottom: 10 } },
+          React.createElement(Input, { style: { width: 320 }, placeholder: '输入 frozenVersionId', value: frozenVersionId, onChange: (e) => setFrozenVersionId(e.target.value) }),
+          React.createElement(Button, { type: 'primary', onClick: generateTasks }, '生成检验任务')
+        ),
+        React.createElement(Table, { rowKey: 'task_id', columns: taskColumns, dataSource: tasks, pagination: { pageSize: 6 } })
+      ),
+      React.createElement(Card, { title: '时间线', size: 'small' },
         React.createElement(Timeline, { items: timelineItems.length ? timelineItems : [{ children: '暂无事件' }] })
       ),
       React.createElement(Modal, { title: '新增记录', open: recordModal, onCancel: () => setRecordModal(false), footer: null },
@@ -599,7 +646,7 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
             React.createElement(Select, { options: [{ value: '变更', label: '变更' }, { value: '检验', label: '检验' }] })
           ),
           React.createElement(Form.Item, { label: '说明', name: 'description', rules: [{ required: true, message: '请输入说明' }] },
-            React.createElement(Input.TextArea, { rows: 4, placeholder: '例如：功能检验通过；或现场调试修改XX参数' })
+            React.createElement(Input.TextArea, { rows: 4 })
           ),
           React.createElement(Button, { type: 'primary', htmlType: 'submit', block: true }, '保存')
         )
