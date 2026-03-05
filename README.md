@@ -1,47 +1,78 @@
-# 机床电气调试与程序版本全流程管理平台（v1 本地验证）
+# 机床电气调试与程序版本全流程管理平台（JavaScript 可视化原型）
 
-本仓库提供一个 **核心业务流转原型**，用于本地验证以下闭环：
+现在提供的是一个**可直接操作的前后端可视化原型**，用于验证你提出的完整业务逻辑，并且区分三类角色界面与权限。
 
-- 调试建档（含 baseline 程序）
-- 调试过程修改留痕（含 24h 补录约束）
-- 提交待检验与检验签署
-- 最终版本封存 + 资料齐全校验
-- 交付与冻结状态迁移
+## 1. 已实现内容
 
-## 目录
+- 前端可视化页面（设备列表 + 操作面板 + 实时结果输出）
+- 后端 API（内存存储）
+- 角色权限控制（`debugger` / `owner` / `admin`）
+- 核心状态机流转：
+  `debugging -> pending_inspection -> inspected -> delivered -> frozen`
+- 关键约束：
+  - baseline 必须存在
+  - 超 24h 补录日志不可提交检验
+  - final 版本必须 sealed
+  - debugger 不能执行检验签署/最终封存/交付冻结
 
-- `app/domain.py`：领域实体与状态枚举
-- `app/workflow.py`：业务流程服务与状态迁移规则
-- `app/demo.py`：可直接运行的流程演示脚本
-- `tests/test_workflow.py`：核心流程单元测试
+## 2. 目录
 
-## 如何运行并查看结果
+- `web/server.js`：Node.js HTTP 服务与 API
+- `web/workflow.js`：核心业务规则与权限校验
+- `web/public/index.html`：前端页面
+- `web/public/main.js`：前端交互逻辑
+- `web/public/styles.css`：页面样式
+- `web/tests/workflow.test.js`：JS 业务逻辑测试
 
-### 1) 运行自动化测试（验证规则正确性）
-
-```bash
-python -m unittest discover -s tests -p 'test_*.py'
-```
-
-预期输出包含：
-
-- `Ran 3 tests ...`
-- `OK`
-
-### 2) 运行演示脚本（查看状态流转过程）
+## 3. 如何运行（你和别人都可直接上手）
 
 ```bash
-python -m app.demo
+cd web
+npm start
 ```
 
-你会看到 1~7 步输出，按顺序展示状态从：
+启动后访问：
 
-`debugging -> pending_inspection -> inspected -> delivered -> frozen`
+- `http://localhost:3000`
 
-## 当前实现边界
+## 4. 如何验证三类角色
 
-- v1 为内存存储（未接数据库）
-- v1 角色权限仅通过接口调用方约定（未实现 RBAC）
-- 检验报告 PDF、附件归档等先保留接口位
+页面左侧可切换：
 
-详见：`docs/technical-spec.md`
+- `debugger`
+- `owner`
+- `admin`
+
+### debugger 可做
+
+- 新建设备
+- 新增调试日志
+- 上传过程版本
+- 提交待检验
+
+### owner 可做
+
+- 检验签署
+- 封存最终版本
+- 标记资料齐全
+- 交付与冻结
+
+### admin 可做
+
+- 全部操作（用于系统验证）
+
+## 5. 本地测试
+
+```bash
+cd web
+npm test
+```
+
+会验证：
+
+- 权限拦截是否生效
+- happy path 是否能进入 `inspected`
+
+---
+
+> 说明：之前的 Python 文件仍保留在仓库中作为早期原型；当前推荐使用 `web/` 下的 JavaScript 可视化版本进行演示与验收。

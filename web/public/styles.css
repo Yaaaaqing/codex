@@ -1,0 +1,11 @@
+body{margin:0;font-family:Arial,Helvetica,sans-serif;display:flex;background:#f5f6f9}
+.sidebar{width:230px;background:#1f2937;color:#fff;padding:16px;min-height:100vh}
+.sidebar input,.sidebar select{width:100%;margin:6px 0 12px;padding:6px}
+main{flex:1;padding:18px}
+table{width:100%;border-collapse:collapse;background:#fff}
+th,td{border:1px solid #ddd;padding:8px}
+.panel{background:#fff;padding:12px;margin-top:12px}
+.row{margin:8px 0;display:flex;gap:8px;flex-wrap:wrap}
+button{padding:6px 10px;cursor:pointer}
+pre{background:#111827;color:#c7f9cc;padding:10px;min-height:130px}
+form input{margin-right:6px;padding:6px}
