@@ -1,0 +1,24 @@
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f6f9}
+.hidden{display:none}
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center}
+.login-card{width:420px;background:#fff;border:1px solid #d1d5db;border-radius:8px;padding:20px}
+.login-card h1{margin-top:0}
+.login-card form{display:flex;flex-direction:column;gap:10px}
+.login-card input{padding:8px}
+.login-card .hint{margin-top:10px;color:#4b5563;font-size:13px}
+.error{color:#dc2626;margin-top:8px;min-height:20px}
+
+.app-wrap{display:flex}
+.sidebar{width:240px;background:#1f2937;color:#fff;padding:16px;min-height:100vh}
+.sidebar ul{padding-left:18px;color:#cbd5e1}
+.sidebar button{width:100%;margin-bottom:8px}
+main{flex:1;padding:18px}
+table{width:100%;border-collapse:collapse;background:#fff}
+th,td{border:1px solid #ddd;padding:8px}
+.panel{background:#fff;padding:12px;margin-top:12px}
+.row{margin:8px 0;display:flex;gap:8px;flex-wrap:wrap}
+button{padding:6px 10px;cursor:pointer}
+button.ghost{background:#111827;color:#fff;border:1px solid #6b7280}
+pre{background:#111827;color:#c7f9cc;padding:10px;min-height:130px}
+form input{margin-right:6px;padding:6px}
+h4{margin:8px 0 4px;color:#374151}

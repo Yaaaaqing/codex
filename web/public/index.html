@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>机床调试流程平台 v1</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <section id="loginView" class="login-wrap">
+    <div class="login-card">
+      <h1>系统登录</h1>
+      <p>仅支持登录。账号注册需通过工单申请，由管理员统一创建。</p>
+      <form id="loginForm">
+        <input name="username" placeholder="用户名" required />
+        <input name="password" type="password" placeholder="密码" required />
+        <button>登录</button>
+      </form>
+      <div class="hint">
+        演示账号：alice/alice123（debugger），bob/bob123（owner），admin/admin123（admin）
+      </div>
+      <div id="loginError" class="error"></div>
+    </div>
+  </section>
+
+  <section id="appView" class="app-wrap hidden">
+    <aside class="sidebar">
+      <h2>流程平台</h2>
+      <div id="currentUser"></div>
+      <button id="refreshBtn">刷新设备</button>
+      <button id="logoutBtn" class="ghost">退出登录</button>
+      <hr/>
+      <div id="roleTips"></div>
+      <ul id="menuList"></ul>
+    </aside>
+    <main>
+      <h1>设备列表</h1>
+      <table>
+        <thead><tr><th>SN</th><th>产线</th><th>型号</th><th>状态</th><th>责任人</th><th>基线审批</th><th>检验模板</th></tr></thead>
+        <tbody id="deviceTable"></tbody>
+      </table>
+
+      <section class="panel" id="createPanel">
+        <h3>新建设备</h3>
+        <form id="createForm">
+          <input name="deviceSn" placeholder="SN" required />
+          <input name="productLine" placeholder="产品线(L1/L2)" required />
+          <input name="model" placeholder="型号" required />
+          <input name="ownerDebugger" placeholder="责任调试人" required />
+          <input name="baselineFileName" placeholder="baseline文件名" required />
+          <button>创建</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h3>设备操作</h3>
+        <div class="row"><input id="sn" placeholder="设备SN"/></div>
+
+        <h4>调试人员</h4>
+        <div class="row role-debugger role-admin">
+          <button onclick="apiAddLog()">新增调试日志</button>
+          <button onclick="apiUploadProcess()">上传过程版本</button>
+          <button onclick="apiSubmitInspection()">提交待检验</button>
+        </div>
+
+        <h4>负责人/管理员</h4>
+        <div class="row role-owner role-admin">
+          <button onclick="apiApproveBaseline()">审批基线</button>
+          <button onclick="apiSignInspection()">检验签署</button>
+          <button onclick="apiSealFinal()">封存最终版本</button>
+          <button onclick="apiDocsReady()">资料齐全</button>
+          <button onclick="apiArchiveReport()">归档检验报告</button>
+          <button onclick="apiApproveTechDocs()">审批技术文件</button>
+          <button onclick="apiDeliver()">交付</button>
+          <button onclick="apiFreeze()">冻结</button>
+        </div>
+      </section>
+
+      <pre id="output"></pre>
+    </main>
+  </section>
+
+  <script src="/main.js"></script>
+</body>
+</html>
