@@ -52,11 +52,11 @@ function makeVersionNo({ deviceSn, userLabel, code }) {
   return `${deviceSn}_${sanitizeLabel(userLabel)}_${code}_${tsYYYYMMDDHHmm()}`;
 }
 
-async function audit(db, { action, userId, dept, deviceSn = null, plcVersionId = null, targetRef = null, detail = '' }) {
+async function audit(db, { action, userId, dept, deviceSn = null, plcVersionId = null, detail = '' }) {
   await run(db, `
-    INSERT INTO audit_logs (id, action, user_id, dept, device_sn, plc_version_id, target_ref, detail, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [uuidv4(), action, userId, dept, deviceSn, plcVersionId, targetRef, detail, nowIso()]);
+    INSERT INTO audit_logs (id, action, user_id, dept, device_id, plc_version_id, detail, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [uuidv4(), action, userId, dept, deviceSn, plcVersionId, detail, nowIso()]);
 }
 
 function authRequired(req, res, next) {
@@ -201,8 +201,8 @@ app.post('/api/devices', authRequired, upload.single('baselineFile'), async (req
       INSERT INTO plc_versions (
       plc_version_id, device_sn, version_no, user_label, version_type, version_seq, file_ref,
       approval_status, approved_by, approved_at, created_by, created_at
-      ) VALUES (?, ?, ?, ?, 'S', ?, ?, 'APPROVED', ?, ?, ?, ?)
-       `, [plcVersionId, deviceSn, versionNo, userLabel, nextSeq, req.file.path, req.user.id, nowIso(), req.user.id, nowIso()]);
+      ) VALUES (?, ?, ?, ?, 'B', 0, ?, 'PENDING', NULL, NULL, ?, ?)
+       `, [plcVersionId, deviceSn, versionNo, userLabel, fileRef, req.user.id, nowIso()]);
 
     await audit(db, {
       action: 'PLC_BASELINE_SUBMIT',
@@ -211,7 +211,6 @@ app.post('/api/devices', authRequired, upload.single('baselineFile'), async (req
       deviceSn: deviceSn,              // 你后面会改 audit 参数名，这里先复用
       plcVersionId,
       detail: `versionNo=${versionNo}`,
-      targetRef: `Device:${deviceSn}`
     });
 
     res.json({ deviceSn, baselinePlcVersionId: plcVersionId });
@@ -256,7 +255,6 @@ app.post('/api/devices/:deviceSn/baseline/:plcVersionId/approve', authRequired, 
       dept: req.user.dept,
       deviceSn,
       plcVersionId,
-      targetRef: `PlcVersion:${plcVersionId}`,
       detail: ''
     });
 
@@ -292,7 +290,6 @@ app.post('/api/devices/:deviceSn/baseline/:plcVersionId/reject', authRequired, a
       dept: req.user.dept,
       deviceSn,
       plcVersionId,
-      targetRef: `PlcVersion:${plcVersionId}`,
       detail: `reason=${reason || ''}`
     });
     res.json({ ok: true });
@@ -362,10 +359,10 @@ app.post('/api/versions/:vid/records', authRequired, async (req, res) => {
 
   const db = openDb();
   try {
-    const v = await get(db, `SELECT * FROM plc_versions WHERE id = ?`, [req.params.vid]);
+    const v = await get(db, `SELECT * FROM plc_versions WHERE plc_version_id = ?`, [req.params.vid]);
     if (!v) return res.status(404).json({ message: '版本不存在' });
 
-    const device = await loadDevice(db, v.device_id);
+    const device = await loadDevice(db, v.device_sn);
     if (!device) return res.status(404).json({ message: '设备不存在' });
     if (!canAccessDevice(req.user, device)) return res.status(403).json({ message: '无权限操作该版本' });
 
@@ -375,7 +372,7 @@ app.post('/api/versions/:vid/records', authRequired, async (req, res) => {
       VALUES (?, ?, ?, ?)
     `, [id, req.params.vid, `[${recordType || '记录'}] ${description}`, nowIso()]);
 
-    await audit(db, { action: '新增记录', userId: req.user.id, dept: req.user.dept, deviceId: device.id, plcVersionId: req.params.vid, detail: `type=${recordType || '记录'}` });
+    await audit(db, { action: '新增记录', userId: req.user.id, dept: req.user.dept, deviceSn: device.device_sn, plcVersionId: req.params.vid, detail: `type=${recordType || '记录'}` });
 
     res.json({ ok: true, id });
   } catch (e) {
@@ -405,7 +402,7 @@ app.post('/api/devices/:deviceSn/changeRecords', authRequired, async (req, res) 
       changeReason, changeSummary, (impactInspection ? 1 : 0), nowIso()
     ]);
 
-    await audit(db, { action: 'CHANGE_RECORD_CREATE', userId: req.user.id, dept: req.user.dept, deviceId: deviceSn, plcVersionId: null, detail: `impactInspection=${impactInspection ? 1 : 0}`, targetRef: `Change:${changeId}` });
+    await audit(db, { action: 'CHANGE_RECORD_CREATE', userId: req.user.id, dept: req.user.dept, deviceSn, plcVersionId: null, detail: `impactInspection=${impactInspection ? 1 : 0}` });
     res.json({ ok: true, changeId });
   } catch (e) {
     res.status(500).json({ message: '保存失败', error: String(e) });
@@ -430,10 +427,10 @@ app.get('/api/devices/:deviceSn/changeRecords', authRequired, async (req, res) =
 app.get('/api/versions/:vid/records', authRequired, async (req, res) => {
   const db = openDb();
   try {
-    const v = await get(db, `SELECT * FROM plc_versions WHERE id = ?`, [req.params.vid]);
+    const v = await get(db, `SELECT * FROM plc_versions WHERE plc_version_id = ?`, [req.params.vid]);
     if (!v) return res.status(404).json({ message: '版本不存在' });
 
-    const device = await loadDevice(db, v.device_id);
+    const device = await loadDevice(db, v.device_sn);
     if (!device) return res.status(404).json({ message: '设备不存在' });
     if (!canAccessDevice(req.user, device)) return res.status(403).json({ message: '无权限访问' });
 
@@ -459,7 +456,7 @@ app.get('/api/devices/:deviceId/timeline', authRequired, async (req, res) => {
       WHERE device_id = ?
       ORDER BY created_at DESC
       LIMIT 200
-    `, [device.id]);
+    `, [device.device_sn]);
 
     // Optional: include record rows mapped by version (already in audit as '新增记录')
     res.json(a);
@@ -492,7 +489,28 @@ app.get('/api/devices/:deviceSn/plcVersions', authRequired, async (req, res) => 
 });
 
 //-----------download--------
-app.get('/api/devices/:deviceSn/plcVersions', authRequired, async (req, res) => {
+app.get('/api/versions/:vid/download', authRequired, async (req, res) => {
+  const { vid } = req.params;
+  const db = openDb();
+  try {
+    const version = await get(db, `SELECT * FROM plc_versions WHERE plc_version_id=?`, [vid]);
+    if (!version) return res.status(404).json({ message: '版本不存在' });
+
+    const device = await loadDevice(db, version.device_sn);
+    if (!device) return res.status(404).json({ message: '设备不存在' });
+    if (!canAccessDevice(req.user, device)) return res.status(403).json({ message: '无权限' });
+
+    if (!version.file_ref || !fs.existsSync(version.file_ref)) {
+      return res.status(404).json({ message: '文件不存在或已被删除' });
+    }
+    res.download(version.file_ref, path.basename(version.file_ref));
+  } catch (e) {
+    res.status(500).json({ message: '下载失败', error: String(e) });
+  } finally { db.close(); }
+});
+
+// 兼容前端旧接口
+app.get('/api/devices/:deviceSn/versions', authRequired, async (req, res) => {
   const { deviceSn } = req.params;
   const db = openDb();
   try {
@@ -501,112 +519,144 @@ app.get('/api/devices/:deviceSn/plcVersions', authRequired, async (req, res) => 
     if (!canAccessDevice(req.user, device)) return res.status(403).json({ message: '无权限' });
 
     const rows = await all(db, `
-      SELECT plc_version_id, version_no, user_label, version_type, version_seq,
-             approval_status, approved_by, approved_at, created_by, created_at
+      SELECT plc_version_id AS id, version_no AS display_no, file_ref AS filename, created_at
       FROM plc_versions
       WHERE device_sn=?
       ORDER BY created_at DESC
     `, [deviceSn]);
-
     res.json(rows);
   } catch (e) {
     res.status(500).json({ message: '查询失败', error: String(e) });
   } finally { db.close(); }
 });
 
+app.post('/api/devices/:deviceSn/versions', authRequired, upload.single('file'), async (req, res) => {
+  const { deviceSn } = req.params;
+  if (!req.file) return res.status(400).json({ message: 'file 必传' });
+
+  const db = openDb();
+  try {
+    const device = await loadDevice(db, deviceSn);
+    if (!device) return res.status(404).json({ message: '设备不存在' });
+    if (!canAccessDevice(req.user, device)) return res.status(403).json({ message: '无权限' });
+
+    const id = uuidv4();
+    const userLabel = req.body?.versionLabel || '常规版本';
+    const versionNo = makeVersionNo({ deviceSn, userLabel, code: 'S' });
+    await run(db, `
+      INSERT INTO plc_versions (
+        plc_version_id, device_sn, version_no, user_label, version_type, version_seq,
+        file_ref, approval_status, approved_by, approved_at, created_by, created_at
+      ) VALUES (?, ?, ?, ?, 'S', 0, ?, 'NA', NULL, NULL, ?, ?)
+    `, [id, deviceSn, versionNo, userLabel, req.file.path, req.user.id, nowIso()]);
+
+    await audit(db, { action: '上传版本', userId: req.user.id, dept: req.user.dept, deviceSn, plcVersionId: id, detail: versionNo });
+    res.json({ ok: true, id });
+  } catch (e) {
+    res.status(500).json({ message: '上传失败', error: String(e) });
+  } finally { db.close(); }
+});
+
+app.post('/api/devices/:deviceSn/versions/:vid/set-current', authRequired, async (req, res) => {
+  const { deviceSn, vid } = req.params;
+  const db = openDb();
+  try {
+    const device = await loadDevice(db, deviceSn);
+    if (!device) return res.status(404).json({ message: '设备不存在' });
+    if (!canAccessDevice(req.user, device)) return res.status(403).json({ message: '无权限' });
+    const v = await get(db, `SELECT * FROM plc_versions WHERE plc_version_id=? AND device_sn=?`, [vid, deviceSn]);
+    if (!v) return res.status(404).json({ message: '版本不存在' });
+
+    await run(db, `UPDATE device_pointers SET current_version_id=?, updated_at=? WHERE device_sn=?`, [vid, nowIso(), deviceSn]);
+    await audit(db, { action: '设为当前版本', userId: req.user.id, dept: req.user.dept, deviceSn, plcVersionId: vid });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ message: '设置失败', error: String(e) });
+  } finally { db.close(); }
+});
+
+app.post('/api/devices/:deviceSn/versions/:vid/set-baseline', authRequired, async (req, res) => {
+  const { deviceSn, vid } = req.params;
+  const db = openDb();
+  try {
+    const device = await loadDevice(db, deviceSn);
+    if (!device) return res.status(404).json({ message: '设备不存在' });
+    if (!canAccessDevice(req.user, device)) return res.status(403).json({ message: '无权限' });
+    const v = await get(db, `SELECT * FROM plc_versions WHERE plc_version_id=? AND device_sn=?`, [vid, deviceSn]);
+    if (!v) return res.status(404).json({ message: '版本不存在' });
+
+    await run(db, `UPDATE device_pointers SET baseline_version_id=?, updated_at=? WHERE device_sn=?`, [vid, nowIso(), deviceSn]);
+    await audit(db, { action: '设为基线版本', userId: req.user.id, dept: req.user.dept, deviceSn, plcVersionId: vid });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ message: '设置失败', error: String(e) });
+  } finally { db.close(); }
+});
+
 // ---------- KPIs ----------
-// app.get('/api/kpi/employee', authRequired, async (req, res) => {
-//   const db = openDb();
-//   try {
-//     // For user role only meaningful; for others still computed by their scope
-//     let deviceIds = [];
-//     if (req.user.role === 'admin') {
-//       deviceIds = (await all(db, `SELECT id FROM devices`, [])).map(r => r.id);
-//     } else if (req.user.role === 'dept_lead') {
-//       deviceIds = (await all(db, `SELECT id FROM devices WHERE dept = ?`, [req.user.dept])).map(r => r.id);
-//     } else {
-//       deviceIds = (await all(db, `SELECT id FROM devices WHERE created_by = ?`, [req.user.id])).map(r => r.id);
-//     }
+app.get('/api/kpi/employee', authRequired, async (req, res) => {
+  const db = openDb();
+  try {
+    let deviceSns = [];
+    if (req.user.role === 'admin') {
+      deviceSns = (await all(db, `SELECT device_sn FROM devices`)).map(r => r.device_sn);
+    } else if (req.user.role === 'dept_lead') {
+      deviceSns = (await all(db, `SELECT device_sn FROM devices WHERE dept = ?`, [req.user.dept])).map(r => r.device_sn);
+    } else {
+      deviceSns = (await all(db, `SELECT device_sn FROM devices WHERE created_by = ?`, [req.user.id])).map(r => r.device_sn);
+    }
 
-//     const deviceCount = deviceIds.length;
-//     if (deviceIds.length === 0) return res.json({ deviceCount, versionCount: 0, needBaselineCount: 0 });
+    const deviceCount = deviceSns.length;
+    if (!deviceCount) return res.json({ deviceCount, versionCount: 0, needBaselineCount: 0 });
 
-//     const placeholders = deviceIds.map(() => '?').join(',');
-//     const versionCountRow = await get(db, `SELECT COUNT(1) AS c FROM plc_versions WHERE device_id IN (${placeholders})`, deviceIds);
-//     const needBaselineRow = await get(db, `
-//       SELECT COUNT(1) AS c
-//       FROM device_pointers p
-//       JOIN devices d ON d.id = p.device_id
-//       WHERE d.id IN (${placeholders}) AND p.baseline_version_id IS NULL
-//     `, deviceIds);
+    const placeholders = deviceSns.map(() => '?').join(',');
+    const versionCountRow = await get(db, `SELECT COUNT(1) AS c FROM plc_versions WHERE device_sn IN (${placeholders})`, deviceSns);
+    const needBaselineRow = await get(db, `SELECT COUNT(1) AS c FROM device_pointers WHERE device_sn IN (${placeholders}) AND baseline_version_id IS NULL`, deviceSns);
+    res.json({ deviceCount, versionCount: versionCountRow?.c || 0, needBaselineCount: needBaselineRow?.c || 0 });
+  } catch (e) {
+    res.status(500).json({ message: '查询失败', error: String(e) });
+  } finally { db.close(); }
+});
 
-//     res.json({
-//       deviceCount,
-//       versionCount: versionCountRow?.c || 0,
-//       needBaselineCount: needBaselineRow?.c || 0
-//     });
-//   } catch (e) {
-//     res.status(500).json({ message: '查询失败', error: String(e) });
-//   } finally { db.close(); }
-// });
+app.get('/api/kpi/dept', authRequired, async (req, res) => {
+  const db = openDb();
+  try {
+    const where = req.user.role === 'admin' ? '' : 'WHERE dept = ?';
+    const params = req.user.role === 'admin' ? [] : [req.user.dept];
+    const deptFilter = req.user.role === 'admin' ? '' : 'WHERE d.dept = ?';
+    const baselineFilter = req.user.role === 'admin'
+      ? 'WHERE p.baseline_version_id IS NOT NULL'
+      : 'WHERE d.dept = ? AND p.baseline_version_id IS NOT NULL';
 
-// app.get('/api/kpi/dept', authRequired, async (req, res) => {
-//   const db = openDb();
-//   try {
-//     // For dept_lead/admin: scope = dept or all
-//     const scopeDept = req.user.role === 'admin' ? null : req.user.dept;
-//     const where = scopeDept ? 'WHERE dept = ?' : '';
-//     const params = scopeDept ? [scopeDept] : [];
-
-//     const deviceCount = (await get(db, `SELECT COUNT(1) AS c FROM devices ${where}`, params))?.c || 0;
-//     const baselineCount = (await get(db, `
-//       SELECT COUNT(1) AS c
-//       FROM device_pointers p
-//       JOIN devices d ON d.id = p.device_id
-//       ${scopeDept ? 'WHERE d.dept = ?' : ''}
-//       AND p.baseline_version_id IS NOT NULL
-//     `, params))?.c || 0;
-
-//     const uploadedCount = (await get(db, `
-//       SELECT COUNT(DISTINCT d.id) AS c
-//       FROM devices d
-//       JOIN plc_versions v ON v.device_id = d.id
-//       ${scopeDept ? 'WHERE d.dept = ?' : ''}
-//     `, params))?.c || 0;
-
-//     const needBaseline = deviceCount - baselineCount;
-//     res.json({ deviceCount, uploadedCount, baselineCount, needBaseline });
-//   } catch (e) {
-//     res.status(500).json({ message: '查询失败', error: String(e) });
-//   } finally { db.close(); }
-// });
+    const deviceCount = (await get(db, `SELECT COUNT(1) AS c FROM devices ${where}`, params))?.c || 0;
+    const uploadedCount = (await get(db, `SELECT COUNT(DISTINCT v.device_sn) AS c FROM plc_versions v JOIN devices d ON d.device_sn=v.device_sn ${deptFilter}`, params))?.c || 0;
+    const baselineCount = (await get(db, `SELECT COUNT(1) AS c FROM device_pointers p JOIN devices d ON d.device_sn=p.device_sn ${baselineFilter}`, params))?.c || 0;
+    res.json({ deviceCount, uploadedCount, baselineCount, needBaseline: deviceCount - baselineCount });
+  } catch (e) {
+    res.status(500).json({ message: '查询失败', error: String(e) });
+  } finally { db.close(); }
+});
 
 // ---------- Audit ----------
-// app.get('/api/audit', authRequired, async (req, res) => {
-//   const db = openDb();
-//   try {
-//     let rows = [];
-//     if (req.user.role === 'admin') {
-//       rows = await all(db, `SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 500`);
-//     } else if (req.user.role === 'dept_lead') {
-//       rows = await all(db, `SELECT * FROM audit_logs WHERE dept = ? ORDER BY created_at DESC LIMIT 500`, [req.user.dept]);
-//     } else {
-//       // user: only devices created by me
-//       const myDeviceIds = (await all(db, `SELECT id FROM devices WHERE created_by = ?`, [req.user.id])).map(r => r.id);
-//       if (myDeviceIds.length === 0) return res.json([]);
-//       const placeholders = myDeviceIds.map(() => '?').join(',');
-//       rows = await all(db, `
-//         SELECT * FROM audit_logs
-//         WHERE device_id IN (${placeholders}) OR (action='登录' AND user_id=?)
-//         ORDER BY created_at DESC
-//         LIMIT 500
-//       `, [...myDeviceIds, req.user.id]);
-//     }
-//     res.json(rows);
-//   } catch (e) {
-//     res.status(500).json({ message: '查询失败', error: String(e) });
-//   } finally { db.close(); }
-// });
+app.get('/api/audit', authRequired, async (req, res) => {
+  const db = openDb();
+  try {
+    let rows = [];
+    if (req.user.role === 'admin') {
+      rows = await all(db, `SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 500`);
+    } else if (req.user.role === 'dept_lead') {
+      rows = await all(db, `SELECT * FROM audit_logs WHERE dept = ? ORDER BY created_at DESC LIMIT 500`, [req.user.dept]);
+    } else {
+      const myDeviceSns = (await all(db, `SELECT device_sn FROM devices WHERE created_by = ?`, [req.user.id])).map(r => r.device_sn);
+      if (myDeviceSns.length === 0) return res.json([]);
+      const placeholders = myDeviceSns.map(() => '?').join(',');
+      rows = await all(db, `SELECT * FROM audit_logs WHERE device_id IN (${placeholders}) OR (action='登录' AND user_id=?) ORDER BY created_at DESC LIMIT 500`, [...myDeviceSns, req.user.id]);
+    }
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ message: '查询失败', error: String(e) });
+  } finally { db.close(); }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ Demo 已启动：http://localhost:${PORT}`));
