@@ -1,0 +1,17 @@
+{
+  "name": "plc-version-platform-demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "init": "node scripts/init.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.3",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "sqlite3": "^5.1.7",
+    "uuid": "^9.0.1"
+  }
+}
