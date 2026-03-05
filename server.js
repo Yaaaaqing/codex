@@ -467,6 +467,29 @@ app.get('/api/devices/:deviceSn/changeRecords', authRequired, async (req, res) =
   } finally { db.close(); }
 });
 
+
+app.post('/api/versions/:vid/records', authRequired, async (req, res) => {
+  const { description, recordType } = req.body || {};
+  if (!description) return res.status(400).json({ message: 'description 必填' });
+  const db = openDb();
+  try {
+    const v = await get(db, `SELECT * FROM plc_versions WHERE plc_version_id=?`, [req.params.vid]);
+    if (!v) return res.status(404).json({ message: '版本不存在' });
+    const device = await loadDevice(db, v.device_sn);
+    if (!device || !canAccessDevice(req.user, device)) return res.status(403).json({ message: '无权限' });
+    const changeId = uuidv4();
+    await run(db, `
+      INSERT INTO change_records (
+        change_id,device_sn,plc_version_id,function_domain,change_date,changer_user_id,change_reason,change_summary,impact_inspection,is_backfilled,created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+    `, [changeId, v.device_sn, v.plc_version_id, recordType || '记录', nowIso(), req.user.id, recordType || '记录', description, nowIso()]);
+    await audit(db, { action: 'VERSION_RECORD_ADD', userId: req.user.id, dept: req.user.dept, deviceSn: v.device_sn, plcVersionId: v.plc_version_id, detail: `${recordType || '记录'}:${description}` });
+    res.json({ ok: true, id: changeId });
+  } catch (e) {
+    res.status(500).json({ message: '保存失败', error: String(e) });
+  } finally { db.close(); }
+});
+
 app.get('/api/versions/:vid/download', authRequired, async (req, res) => {
   const db = openDb();
   try {
