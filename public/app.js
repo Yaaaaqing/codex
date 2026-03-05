@@ -26,12 +26,15 @@ function formatTs(ts) {
 
 function StatusTag({ status }) {
   const map = {
-    '未上传': { color: 'default' },
-    '待设基线': { color: 'orange' },
-    '已设基线': { color: 'green' }
+    'PENDING_APPROVAL': { color: 'orange', text: '待审批' },
+    'DEBUGGING': { color: 'blue', text: '调试中' },
+    'PENDING_INSPECTION': { color: 'gold', text: '待检验' },
+    'INSPECTED': { color: 'green', text: '已检验(可交付)' },
+    'DELIVERED': { color: 'cyan', text: '已交付' },
+    'FROZEN': { color: 'purple', text: '已冻结' }
   };
-  const m = map[status] || { color: 'blue' };
-  return React.createElement(Tag, { color: m.color }, status || '-');
+  const m = map[status] || { color: 'blue', text: status || '-' };
+  return React.createElement(Tag, { color: m.color }, m.text);
 }
 
 function App() {
@@ -43,7 +46,7 @@ function App() {
     if (!res.ok) return null;
     const u = await res.json();
     setMe(u);
-    setRoute(u.role === 'admin' ? 'admin' : (u.role === 'dept_lead' ? 'lead' : 'employee'));
+    setRoute(['admin','process_admin'].includes(u.role) ? 'admin' : (['dept_lead','supervisor','qa'].includes(u.role) ? 'lead' : 'employee'));
     return u;
   }
 
@@ -156,7 +159,7 @@ function EmployeeDashboard({ me }) {
     const data = await res.json();
     if (!res.ok) return message.error(data.message || '创建失败');
 
-    message.success('创建成功：已提交 Baseline 待审批');
+    message.success('创建设备成功：已建档，需主管审批通过后才可继续调试');
     setCreateModal(false);
     createForm.resetFields();
     await refresh();
@@ -166,6 +169,7 @@ function EmployeeDashboard({ me }) {
     { title: '设备名称', dataIndex: 'name', key: 'name', render: (t) => React.createElement(Text, { strong: true }, t) },
     { title: '设备SN', dataIndex: 'device_sn', key: 'device_sn', width: 160, render: (t) => React.createElement(Text, { className: 'mono' }, t) },
     { title: '部门', dataIndex: 'dept', key: 'dept', width: 90, render: (t) => React.createElement(Tag, null, t) },
+    { title: '设备状态', dataIndex: 'status', key: 'status', width: 130, render: (t) => React.createElement(StatusTag, { status: t }) },
     { title: '创建人', dataIndex: 'created_by', key: 'created_by', width: 100 },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 170, render: (t) => formatTs(t) },
     {
@@ -278,9 +282,10 @@ function DeptLeadDashboard({ me }) {
 
   const columns = [
     { title: '设备名称', dataIndex: 'name', key: 'name', render: (t) => React.createElement(Text, { strong: true }, t) },
+    { title: '设备状态', dataIndex: 'status', key: 'status', width: 130, render: (t) => React.createElement(StatusTag, { status: t }) },
     { title: '创建人', dataIndex: 'created_by', key: 'created_by', width: 120 },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 170, render: (t) => formatTs(t) },
-    { title: '操作', key: 'op', width: 120, render: (_, r) => React.createElement(Button, { type: 'link', onClick: () => setDetailId(r.id) }, '查看详情') }
+    { title: '操作', key: 'op', width: 120, render: (_, r) => React.createElement(Button, { type: 'link', onClick: () => setDetailId(r.device_sn) }, '查看详情') }
   ];
 
   const auditColumns = [
@@ -484,7 +489,7 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
     const res = await apiFetch(url, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) return message.error(data.message || '操作失败');
-    message.success(kind === 'current' ? '已设为当前版本' : '已设为基线版本');
+    message.success('已设为当前版本');
     refresh();
   }
 
@@ -501,13 +506,6 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
     refresh();
   }
 
-  async function createArchive() {
-    const res = await apiFetch('/api/debug-archives', { method: 'POST', body: { deviceSn: deviceId } });
-    const data = await res.json();
-    if (!res.ok) return message.error(data.message || '建档失败');
-    message.success('建档成功');
-    refresh();
-  }
 
   async function submitArchive() {
     if (!archive?.archive_id) return;
@@ -561,7 +559,6 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
       title: '操作', key: 'op', width: 360,
       render: (_, r) => React.createElement(Space, null,
         React.createElement(Button, { size: 'small', onClick: () => setPointer(r.id, 'current') }, '设为当前'),
-        React.createElement(Button, { size: 'small', onClick: () => setPointer(r.id, 'baseline') }, '设为基线'),
         React.createElement(Button, { size: 'small', onClick: () => window.open(`/api/versions/${r.id}/download`, '_blank') }, '下载'),
         React.createElement(Button, { size: 'small', type: 'primary', onClick: () => finalize(r.id) }, '封存Final')
       )
@@ -608,10 +605,9 @@ function DeviceDetailDrawer({ deviceId, onClose, role }) {
         React.createElement(Space, { direction: 'vertical', style: { width: '100%' } },
           React.createElement(Text, null, `档案状态：${archive?.approval_status || '未建档'}`),
           React.createElement(Space, null,
-            React.createElement(Button, { onClick: createArchive }, '创建调试档案'),
-            React.createElement(Button, { onClick: submitArchive, disabled: !archive || archive.approval_status !== 'DRAFT' }, '提交审批'),
-            React.createElement(Button, { type: 'primary', onClick: () => approveArchive(true), disabled: !archive || !['SUBMITTED', 'DRAFT'].includes(archive.approval_status) }, '审批通过'),
-            React.createElement(Button, { danger: true, onClick: () => approveArchive(false), disabled: !archive || !['SUBMITTED', 'DRAFT'].includes(archive.approval_status) }, '审批驳回')
+            React.createElement(Button, { onClick: submitArchive, disabled: !archive || archive.approval_status !== 'DRAFT' || !['user','debugger'].includes(role) }, '提交审批'),
+            (['dept_lead','supervisor','admin'].includes(role) ? React.createElement(Button, { type: 'primary', onClick: () => approveArchive(true), disabled: !archive || archive.approval_status !== 'SUBMITTED' }, '审批通过') : null),
+            (['dept_lead','supervisor','admin'].includes(role) ? React.createElement(Button, { danger: true, onClick: () => approveArchive(false), disabled: !archive || archive.approval_status !== 'SUBMITTED' }, '审批驳回') : null)
           )
         )
       ),

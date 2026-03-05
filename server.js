@@ -189,7 +189,7 @@ app.post('/api/debug-archives', authRequired, requireRoles(['debugger', 'supervi
   } finally { db.close(); }
 });
 
-app.post('/api/debug-archives/:archiveId/submit', authRequired, requireRoles(['debugger', 'supervisor', 'admin']), async (req, res) => {
+app.post('/api/debug-archives/:archiveId/submit', authRequired, requireRoles(['debugger']), async (req, res) => {
   const db = openDb();
   try {
     const a = await get(db, `SELECT * FROM debug_archives WHERE archive_id=?`, [req.params.archiveId]);
@@ -212,6 +212,11 @@ app.post('/api/debug-archives/:archiveId/approve', authRequired, requireRoles(['
     const device = await loadDevice(db, a.device_sn);
     if (!device || !canAccessDevice(req.user, device)) return res.status(403).json({ message: '无权限' });
     await run(db, `UPDATE debug_archives SET approval_status='APPROVED', approver_user_id=?, approve_comment=?, approved_at=?, updated_at=? WHERE archive_id=?`, [req.user.id, req.body?.comment || '', nowIso(), nowIso(), a.archive_id]);
+    if (a.plc_draft_version_id) {
+      await run(db, `UPDATE plc_versions SET approval_status='APPROVED', approved_by=?, approved_at=? WHERE plc_version_id=?`, [req.user.id, nowIso(), a.plc_draft_version_id]);
+      await run(db, `UPDATE device_pointers SET baseline_version_id=?, baseline_locked=1, updated_at=? WHERE device_sn=?`, [a.plc_draft_version_id, nowIso(), a.device_sn]);
+    }
+    await run(db, `UPDATE devices SET status='DEBUGGING' WHERE device_sn=?`, [a.device_sn]);
     await audit(db, { action: 'DEBUG_ARCHIVE_APPROVED', userId: req.user.id, dept: req.user.dept, deviceSn: a.device_sn, plcVersionId: a.plc_draft_version_id, detail: `archive=${a.archive_id}` });
     res.json({ ok: true });
   } catch (e) {
@@ -225,6 +230,10 @@ app.post('/api/debug-archives/:archiveId/reject', authRequired, requireRoles(['s
     const a = await get(db, `SELECT * FROM debug_archives WHERE archive_id=?`, [req.params.archiveId]);
     if (!a) return res.status(404).json({ message: '档案不存在' });
     await run(db, `UPDATE debug_archives SET approval_status='REJECTED', approver_user_id=?, approve_comment=?, approved_at=?, updated_at=? WHERE archive_id=?`, [req.user.id, req.body?.comment || '', nowIso(), nowIso(), a.archive_id]);
+    if (a.plc_draft_version_id) {
+      await run(db, `UPDATE plc_versions SET approval_status='REJECTED', approved_by=?, approved_at=? WHERE plc_version_id=?`, [req.user.id, nowIso(), a.plc_draft_version_id]);
+    }
+    await run(db, `UPDATE devices SET status='PENDING_APPROVAL' WHERE device_sn=?`, [a.device_sn]);
     await audit(db, { action: 'DEBUG_ARCHIVE_REJECTED', userId: req.user.id, dept: req.user.dept, deviceSn: a.device_sn, plcVersionId: a.plc_draft_version_id, detail: `archive=${a.archive_id}` });
     res.json({ ok: true });
   } catch (e) {
@@ -284,7 +293,7 @@ app.post('/api/devices', authRequired, upload.single('baselineFile'), async (req
     const exists = await loadDevice(db, deviceSn);
     if (exists) return res.status(400).json({ message: 'deviceSn 已存在' });
 
-    await run(db, `INSERT INTO devices (device_sn,name,dept,status,created_by,created_at) VALUES (?, ?, ?, 'DEBUGGING', ?, ?)`, [deviceSn, name || deviceSn, req.user.dept, req.user.id, nowIso()]);
+    await run(db, `INSERT INTO devices (device_sn,name,dept,status,created_by,created_at) VALUES (?, ?, ?, 'PENDING_APPROVAL', ?, ?)`, [deviceSn, name || deviceSn, req.user.dept, req.user.id, nowIso()]);
     await run(db, `INSERT INTO device_pointers (device_sn,current_version_id,baseline_version_id,sealed_version_id,baseline_locked,updated_at) VALUES (?,NULL,NULL,NULL,0,?)`, [deviceSn, nowIso()]);
 
     const plcVersionId = uuidv4();
@@ -409,7 +418,7 @@ app.post('/api/devices/:deviceSn/versions/:vid/set-current', authRequired, async
   } finally { db.close(); }
 });
 
-app.post('/api/devices/:deviceSn/versions/:vid/set-baseline', authRequired, async (req, res) => {
+app.post('/api/devices/:deviceSn/versions/:vid/set-baseline', authRequired, requireRoles(['supervisor','admin','dept_lead']), async (req, res) => {
   const db = openDb();
   try {
     const { deviceSn, vid } = req.params;
