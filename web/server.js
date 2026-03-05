@@ -1,16 +1,17 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { DeviceWorkflowService, WorkflowError, VersionType } = require('./workflow');
 
 const svc = new DeviceWorkflowService();
 
-function auth(req) {
-  return {
-    role: req.headers['x-role'] || 'debugger',
-    user: req.headers['x-user'] || 'alice',
-  };
-}
+const users = [
+  { username: 'alice', password: 'alice123', role: 'debugger', displayName: '调试员 Alice' },
+  { username: 'bob', password: 'bob123', role: 'owner', displayName: '产线负责人 Bob' },
+  { username: 'admin', password: 'admin123', role: 'admin', displayName: '系统管理员' },
+];
+const sessions = new Map();
 
 function sendJson(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -44,30 +45,67 @@ function serveStatic(req, res) {
   return true;
 }
 
+function currentUser(req) {
+  const token = req.headers['x-auth-token'];
+  if (!token || !sessions.has(token)) return null;
+  return sessions.get(token);
+}
+
+function requireAuth(req, res) {
+  const user = currentUser(req);
+  if (!user) {
+    sendJson(res, 401, { error: 'unauthorized: please login' });
+    return null;
+  }
+  return user;
+}
+
 async function api(req, res) {
   try {
-    const { role, user } = auth(req);
     const body = await readBody(req);
     const url = req.url;
 
-    if (req.method === 'GET' && url === '/api/devices') return sendJson(res, 200, svc.listDevices(role, user));
-    if (req.method === 'POST' && url === '/api/devices') return sendJson(res, 200, svc.createDevice(body, role, user));
+    if (req.method === 'POST' && url === '/api/login') {
+      const found = users.find(u => u.username === body.username && u.password === body.password);
+      if (!found) return sendJson(res, 401, { error: '用户名或密码错误' });
+      const token = crypto.randomBytes(16).toString('hex');
+      sessions.set(token, { username: found.username, role: found.role, displayName: found.displayName });
+      return sendJson(res, 200, { token, user: { username: found.username, role: found.role, displayName: found.displayName } });
+    }
+
+    if (req.method === 'POST' && url === '/api/logout') {
+      const token = req.headers['x-auth-token'];
+      if (token) sessions.delete(token);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (req.method === 'GET' && url === '/api/me') {
+      const me = requireAuth(req, res);
+      if (!me) return;
+      return sendJson(res, 200, { user: me });
+    }
+
+    const me = requireAuth(req, res);
+    if (!me) return;
+
+    if (req.method === 'GET' && url === '/api/devices') return sendJson(res, 200, svc.listDevices(me.role, me.username));
+    if (req.method === 'POST' && url === '/api/devices') return sendJson(res, 200, svc.createDevice(body, me.role, me.username));
 
     const m = url.match(/^\/api\/devices\/([^/]+)\/(.+)$/);
     if (!m) return sendJson(res, 404, { error: 'not found' });
     const sn = decodeURIComponent(m[1]);
     const action = m[2];
 
-    if (req.method === 'POST' && action === 'approve-baseline') return sendJson(res, 200, svc.approveBaseline(sn, role, user, body.approved));
-    if (req.method === 'POST' && action === 'logs') return sendJson(res, 200, svc.addDebugLog(sn, body, role, user));
-    if (req.method === 'POST' && action === 'versions') return sendJson(res, 200, svc.addProgramVersion(sn, body, role, user));
-    if (req.method === 'POST' && action === 'submit-inspection') return sendJson(res, 200, svc.submitInspection(sn, role, user));
-    if (req.method === 'POST' && action === 'sign-inspection') return sendJson(res, 200, svc.signInspection(sn, body.results || [], role, user));
-    if (req.method === 'POST' && action === 'documents-ready') return sendJson(res, 200, svc.setDocumentsReady(sn, body.ready, role));
-    if (req.method === 'POST' && action === 'archive-report') return sendJson(res, 200, svc.archiveInspectionReport(sn, role));
-    if (req.method === 'POST' && action === 'approve-tech-docs') return sendJson(res, 200, svc.approveTechDocs(sn, role));
-    if (req.method === 'POST' && action === 'deliver') return sendJson(res, 200, svc.deliver(sn, role));
-    if (req.method === 'POST' && action === 'freeze') return sendJson(res, 200, svc.freeze(sn, role));
+    if (req.method === 'POST' && action === 'approve-baseline') return sendJson(res, 200, svc.approveBaseline(sn, me.role, me.username, body.approved));
+    if (req.method === 'POST' && action === 'logs') return sendJson(res, 200, svc.addDebugLog(sn, body, me.role, me.username));
+    if (req.method === 'POST' && action === 'versions') return sendJson(res, 200, svc.addProgramVersion(sn, body, me.role, me.username));
+    if (req.method === 'POST' && action === 'submit-inspection') return sendJson(res, 200, svc.submitInspection(sn, me.role, me.username));
+    if (req.method === 'POST' && action === 'sign-inspection') return sendJson(res, 200, svc.signInspection(sn, body.results || [], me.role, me.username));
+    if (req.method === 'POST' && action === 'documents-ready') return sendJson(res, 200, svc.setDocumentsReady(sn, body.ready, me.role));
+    if (req.method === 'POST' && action === 'archive-report') return sendJson(res, 200, svc.archiveInspectionReport(sn, me.role));
+    if (req.method === 'POST' && action === 'approve-tech-docs') return sendJson(res, 200, svc.approveTechDocs(sn, me.role));
+    if (req.method === 'POST' && action === 'deliver') return sendJson(res, 200, svc.deliver(sn, me.role));
+    if (req.method === 'POST' && action === 'freeze') return sendJson(res, 200, svc.freeze(sn, me.role));
 
     return sendJson(res, 404, { error: 'not found' });
   } catch (e) {

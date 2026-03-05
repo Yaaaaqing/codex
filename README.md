@@ -4,6 +4,8 @@
 
 ## 已实现能力
 
+- 登录界面（仅登录）+ 会话鉴权
+- **不提供注册功能**：注册需走工单申请，由管理员统一创建账号
 - 三角色界面差异（`debugger` / `owner` / `admin`）
 - 角色权限强约束（后端校验，不仅是前端按钮）
 - 基线审批门槛（未审批不能提交检验）
@@ -19,8 +21,8 @@
 ## 目录
 
 - `web/workflow.js`：核心业务规则 + 状态机 + 权限
-- `web/server.js`：Node.js HTTP API + 静态页面
-- `web/public/index.html`：前端页面（角色菜单与操作面板）
+- `web/server.js`：Node.js HTTP API + 登录鉴权 + 静态页面
+- `web/public/index.html`：登录页 + 业务页
 - `web/public/main.js`：前端交互逻辑
 - `web/tests/workflow.test.js`：业务规则自动化测试
 
@@ -33,14 +35,13 @@ npm start
 
 浏览器访问：`http://localhost:3000`
 
-## 快速验证建议
+## 登录说明
 
-1. 切换 `debugger` 创建新设备（SN 自定义）
-2. 尝试直接“提交待检验”会失败（未基线审批）
-3. 切换 `owner` 先“审批基线”
-4. 切回 `debugger` 记录修改并“提交待检验”
-5. 切换 `owner` 完成“检验签署 + 封存最终版本 + 资料齐全 + 报告归档 + 技术文件审批”
-6. 观察状态自动变为 `inspected`，再执行“交付/冻结”
+- 演示账号：
+  - `alice / alice123`（debugger）
+  - `bob / bob123`（owner）
+  - `admin / admin123`（admin）
+- 账号注册：不在系统前端开放，必须通过工单申请后由管理员创建
 
 ## 测试
 

@@ -1,10 +1,15 @@
-const roleSelect = document.getElementById('roleSelect');
-const userInput = document.getElementById('userInput');
+let authToken = localStorage.getItem('authToken') || '';
+let currentUser = null;
+
+const loginView = document.getElementById('loginView');
+const appView = document.getElementById('appView');
 const output = document.getElementById('output');
 const deviceTable = document.getElementById('deviceTable');
 
 function headers() {
-  return { 'Content-Type': 'application/json', 'x-role': roleSelect.value, 'x-user': userInput.value };
+  const base = { 'Content-Type': 'application/json' };
+  if (authToken) base['x-auth-token'] = authToken;
+  return base;
 }
 
 function log(msg) { output.textContent = `${new Date().toLocaleTimeString()} ${msg}\n` + output.textContent; }
@@ -16,8 +21,19 @@ async function request(url, method = 'GET', body) {
   return data;
 }
 
-function roleConfig() {
-  const role = roleSelect.value;
+function showLogin(message = '') {
+  loginView.classList.remove('hidden');
+  appView.classList.add('hidden');
+  document.getElementById('loginError').textContent = message;
+}
+
+function showApp() {
+  loginView.classList.add('hidden');
+  appView.classList.remove('hidden');
+}
+
+function applyRoleView() {
+  const role = currentUser.role;
   const tips = {
     debugger: 'debugger: 建档、记录修改、上传过程版本、提交检验（不可审批/签署/交付）',
     owner: 'owner: 审批基线、质检签署、封存最终版本、资料归档审批、交付冻结',
@@ -29,6 +45,7 @@ function roleConfig() {
     admin: ['全局仪表盘', '设备检索', '模板管理', '系统参数'],
   };
 
+  document.getElementById('currentUser').textContent = `${currentUser.displayName}（${role}）`;
   document.getElementById('roleTips').textContent = tips[role];
   document.getElementById('menuList').innerHTML = menus[role].map(m => `<li>${m}</li>`).join('');
 
@@ -52,7 +69,49 @@ async function loadDevices() {
         <td>${d.ownerDebugger}</td><td>${baseline?.approved ? '已审批' : '待审批'}</td><td>${templateVersion}</td>
       </tr>`;
     }).join('');
-  } catch (e) { log(`加载失败: ${e.message}`); }
+  } catch (e) {
+    if (e.message.includes('unauthorized')) return handleLogout();
+    log(`加载失败: ${e.message}`);
+  }
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  try {
+    const data = await request('/api/login', 'POST', body);
+    authToken = data.token;
+    currentUser = data.user;
+    localStorage.setItem('authToken', authToken);
+    showApp();
+    applyRoleView();
+    loadDevices();
+  } catch (err) {
+    showLogin(`登录失败：${err.message}`);
+  }
+}
+
+async function handleLogout() {
+  try {
+    if (authToken) await request('/api/logout', 'POST');
+  } catch (_) {}
+  authToken = '';
+  currentUser = null;
+  localStorage.removeItem('authToken');
+  showLogin('');
+}
+
+async function tryRestoreSession() {
+  if (!authToken) return showLogin('');
+  try {
+    const data = await request('/api/me');
+    currentUser = data.user;
+    showApp();
+    applyRoleView();
+    loadDevices();
+  } catch {
+    handleLogout();
+  }
 }
 
 async function submitForm(e) {
@@ -94,8 +153,9 @@ window.apiApproveTechDocs = () => run('审批技术文件', `/api/devices/${sn()
 window.apiDeliver = () => run('交付', `/api/devices/${sn()}/deliver`);
 window.apiFreeze = () => run('冻结', `/api/devices/${sn()}/freeze`);
 
+document.getElementById('loginForm').addEventListener('submit', handleLogin);
 document.getElementById('createForm').addEventListener('submit', submitForm);
 document.getElementById('refreshBtn').addEventListener('click', loadDevices);
-roleSelect.addEventListener('change', roleConfig);
-roleConfig();
-loadDevices();
+document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+
+tryRestoreSession();
