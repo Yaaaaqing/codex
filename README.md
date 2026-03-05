@@ -12,13 +12,31 @@
 
 - `app/domain.py`：领域实体与状态枚举
 - `app/workflow.py`：业务流程服务与状态迁移规则
+- `app/demo.py`：可直接运行的流程演示脚本
 - `tests/test_workflow.py`：核心流程单元测试
 
-## 快速运行
+## 如何运行并查看结果
+
+### 1) 运行自动化测试（验证规则正确性）
 
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
 ```
+
+预期输出包含：
+
+- `Ran 3 tests ...`
+- `OK`
+
+### 2) 运行演示脚本（查看状态流转过程）
+
+```bash
+python -m app.demo
+```
+
+你会看到 1~7 步输出，按顺序展示状态从：
+
+`debugging -> pending_inspection -> inspected -> delivered -> frozen`
 
 ## 当前实现边界
 
