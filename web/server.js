@@ -58,11 +58,14 @@ async function api(req, res) {
     const sn = decodeURIComponent(m[1]);
     const action = m[2];
 
+    if (req.method === 'POST' && action === 'approve-baseline') return sendJson(res, 200, svc.approveBaseline(sn, role, user, body.approved));
     if (req.method === 'POST' && action === 'logs') return sendJson(res, 200, svc.addDebugLog(sn, body, role, user));
     if (req.method === 'POST' && action === 'versions') return sendJson(res, 200, svc.addProgramVersion(sn, body, role, user));
-    if (req.method === 'POST' && action === 'submit-inspection') return sendJson(res, 200, svc.submitInspection(sn, body.checklistCodes || [], role, user));
+    if (req.method === 'POST' && action === 'submit-inspection') return sendJson(res, 200, svc.submitInspection(sn, role, user));
     if (req.method === 'POST' && action === 'sign-inspection') return sendJson(res, 200, svc.signInspection(sn, body.results || [], role, user));
     if (req.method === 'POST' && action === 'documents-ready') return sendJson(res, 200, svc.setDocumentsReady(sn, body.ready, role));
+    if (req.method === 'POST' && action === 'archive-report') return sendJson(res, 200, svc.archiveInspectionReport(sn, role));
+    if (req.method === 'POST' && action === 'approve-tech-docs') return sendJson(res, 200, svc.approveTechDocs(sn, role));
     if (req.method === 'POST' && action === 'deliver') return sendJson(res, 200, svc.deliver(sn, role));
     if (req.method === 'POST' && action === 'freeze') return sendJson(res, 200, svc.freeze(sn, role));
 
@@ -81,6 +84,7 @@ const server = http.createServer((req, res) => {
 });
 
 svc.createDevice({ deviceSn: 'SN-1001', productLine: 'L1', model: 'M-Alpha', ownerDebugger: 'alice', baselineFileName: 'base.plc' }, 'admin', 'system');
+svc.approveBaseline('SN-1001', 'admin', 'system', true);
 svc.addDebugLog('SN-1001', {
   functionDomain: 'axis', objectName: 'x_limit', reason: 'optimize', summary: '调整参数',
   changedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(), loggedAt: new Date().toISOString(),
